@@ -1,0 +1,765 @@
+---
+title: "Classification of Patients with stroke"
+author: "Anish Raju Ramakrishna Amara"
+date: "2023-12-05"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+### Reference link to the dataset
+
+https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset/data
+
+# Classification of Patients with stroke
+
+For the project, the dataset consists of 11 features which consist of the below features:
+
+1) id: unique identifier
+2) gender: "Male", "Female" or "Other"
+3) age: age of the patient
+4) hypertension: 0 if the patient doesn't have hypertension, 1 if the patient has hypertension
+5) heart_disease: 0 if the patient doesn't have any heart diseases, 1 if the patient has a heart disease
+6) ever_married: "No" or "Yes"
+7) work_type: "children", "Govt_jov", "Never_worked", "Private" or "Self-employed"
+8) Residence_type: "Rural" or "Urban"
+9) avg_glucose_level: average glucose level in blood
+10) bmi: body mass index
+11) smoking_status: "formerly smoked", "never smoked", "smokes" or "Unknown"*
+12) stroke: 1 if the patient had a stroke or 0 if not
+
+The dataset has 5110 observations. The target label will be to predict whether the patient will had a stroke or not given the above features.
+
+
+### Loading the dataset and inspecting the dataset
+
+```{r,echo=FALSE,warning=FALSE,results='hide',include=FALSE}
+## Loading the libraries
+
+library(psych,quietly = TRUE)
+library(MASS,quietly = TRUE) 
+library(factoextra,quietly = TRUE)
+library(ggplot2,quietly = TRUE)
+library(caret,quietly = TRUE)
+library(class,quietly = TRUE)
+library(gmodels,quietly = TRUE)
+library(rpart,quietly = TRUE)
+library(randomForest,quietly = TRUE)
+library(klaR,quietly = TRUE)
+library(e1071,quietly = TRUE)
+library(glmnet,quietly = TRUE)
+library(ipred,quietly = TRUE)
+```
+
+Let us load the data and inspect the dataset and understand a little more about the dataset.
+```{r}
+url <- "https://drive.google.com/uc?export=download&id=1QIx3g5jM2zMjZUkFYW__o8MpOLEu2Lm2"
+df <- read.csv(file = url,
+               header = TRUE, stringsAsFactors = FALSE)
+df <- as.data.frame(df)
+str(df)
+
+
+head(df)
+
+```
+
+### Check for missing values
+
+```{r}
+
+any(is.na(df))
+
+```
+
+From the above dataset inspection we can understand that there is no missing values in the dataset. Most of the features are categorical in nature except for the columns average glucose levels and bmi.
+
+BMI column also has missing data labeled as "N/A" this was not detected above because the column itself is of the type character and hence this was not identified by the above.
+
+Due to this we will impute the missing data with the median of the BMI column
+
+### Imputation with the median
+
+```{r, warning=FALSE}
+
+df$bmi <- as.numeric(df$bmi)
+med <- median(df$bmi,na.rm = TRUE)
+
+df$bmi <- ifelse(is.na(df$bmi),med,df$bmi)
+
+```
+
+### Exploratory graphs
+
+These graphs give us an insight about how the data looks like and thus we can get an idea about the data.
+
+```{r}
+## Separating the categorical and continuous variables for exploratory analysis
+df_c <- df[,c(1,9,10,12)]
+df_cat <- df[,-c(9,10)]
+```
+
+
+```{r}
+
+categorical_columns <- colnames(df_cat)
+
+# Understanding the graphs and the type of data
+gen <- table(df$gender)
+barplot(gen,col = c("navy","orange"),main = "Gender Distribution",xlab = "Gender",ylab = "Frequency")
+
+ht <- table(df_cat$hypertension)
+barplot(ht,col = c("navy","orange"),main = "Hypertension",xlab = "Patients",ylab = "Frequency")
+
+hd <- table(df_cat$heart_disease)
+barplot(hd,col = c("navy","orange"),main = "Heart Disease",xlab = "Patients",ylab = "Frequency")
+
+em <- table(df_cat$ever_married)
+barplot(em,col = c("navy","orange"),main = "Marriage Status",xlab = "People",ylab = "Frequency")
+
+wt <- table(df_cat$work_type)
+barplot(wt,col = c("navy","orange","darkblue","red","black"),main = "Nature of job",xlab = "People",ylab = "Frequency")
+
+rt <- table(df_cat$Residence_type)
+barplot(rt,col = c("navy","orange"),main = "Residence",xlab = "People",ylab = "Frequency")
+
+ss <- table(df_cat$smoking_status)
+barplot(ss,col = c("navy","orange"),main = "Smoking",xlab = "People",ylab = "Frequency")
+
+pairs.panels(df_cat)
+
+# Reset the layout to a single plot
+par(mfrow = c(1, 1))
+
+```
+
+From the graph we can see a rough distribution of the data and understand under what conditions the stroke is more prevalent and when it is less prevalent. We can also see that the graph has more female data. Majority of the patients do not have any heart disease and hypertension. There is a high percentage of marriage population and also shows the different type of jobs from each other.
+
+```{r}
+## Exploring continuous variables
+pairs.panels(df_c)
+```
+
+We can ignore the distribution of stroke and ID because they are just identifiers but we can see that the columns avg_glucose level and bmi does not contribute to the output a lot in this form. This can be confirmed using the correlation test. We will check if the two columns are following the normal distribution using the shapiro-wilk test. After which we will perform the correlation test and confirm on how much the column is contributing to the output
+
+Since, shapiro-wilk test can be performed only for the tests samples of a maximum of 5000 in R, we can do a random sampling of 5000 observations and then perform the shapiro test on that. If the entire column follows a normal distribution a random sample from that is supposed to follow normal distribution as well.
+
+### Normality test of the continuous variables
+
+```{r}
+# Sampling and performing the shapiro-wilk test
+rand_indices <- sample(nrow(df_c),5000,replace = F)
+rand <- df_c[rand_indices,]
+bmi_shap <- shapiro.test(rand$bmi)
+glucose_shap <- shapiro.test(rand$avg_glucose_level)
+
+a <- bmi_shap$p.value
+b <- glucose_shap$p.value
+
+```
+
+Since the p-values of the shapiro-wilk test is `r a` for the bmi column and `r b` for the avg_glucose column we can reject the null hypothesis of the shapiro test. The null hypothesis of the shapiro test states that the data follows a normal distribution. Since we are rejecting this hypothesis we can clearly say that the data does not follow a normal distribution. We can also see from the model that there is left skew in both the distributions and thus is not a normal distribution.
+
+### Encoding categorical variables
+
+We use the count or frequency encoding to encode the columns and replace the character vectors with the frequency encoded values.
+
+```{r}
+count_encode_categorical <- function(data, column) {
+  # Create a mapping of unique values to their counts
+  encoding_map <- table(data[[column]])
+  
+  # Replace values in the column with their counts
+  data[[column]] <- encoding_map[data[[column]]]
+  
+  return(data)
+}
+
+df_cat <- count_encode_categorical(df_cat,"gender")
+df_cat <- count_encode_categorical(df_cat,"ever_married")
+df_cat <- count_encode_categorical(df_cat,"work_type")
+df_cat <- count_encode_categorical(df_cat,"Residence_type")
+df_cat <- count_encode_categorical(df_cat,"smoking_status")
+
+# Changing the type of the encoded variables
+df_cat$ever_married <- as.integer(df_cat$ever_married)
+df_cat$work_type <- as.integer(df_cat$work_type)
+df_cat$Residence_type <- as.integer(df_cat$Residence_type)
+df_cat$smoking_status <- as.integer(df_cat$smoking_status)
+df_cat$gender <- as.integer(df_cat$gender)
+
+
+```
+
+### Performing correlation test of categorical and continuous variables
+```{r}
+
+# Correlation on categorical variables
+cols <- colnames(df_cat)
+
+for (col in cols){
+  correlation <- cor(df_cat$stroke,df_cat[,col])
+  print(col)
+  print(correlation)
+}
+
+# Correlation on continuous variables
+cols <- colnames(df_c)
+for (col in cols){
+  correlation <- cor(df_c$stroke,df_c[,col])
+  print(col)
+  print(correlation)
+}
+
+```
+We can see that the highest correlation for the stroke column is with age with the coefficient of 0.24 from the categorical variables. The column that contributes the most from continuous variable is average glucose leve and it has a correlation coefficient of 0.13
+
+### Outlier identification
+
+```{r}
+# Function to identify the outliers
+
+normalization <- function(column){
+  minimum <- min(column)
+  maximum <- max(column)
+  
+  n_score <- (column - minimum) / (maximum - minimum)
+  return(n_score)
+}
+```
+
+```{r}
+plot(df$avg_glucose_level,df$avg_glucose_level,xlab = "glucose level",ylab = "glucose level")
+
+```
+
+```{r}
+plot(df$bmi,df$bmi,xlab = "bmi",ylab = "bmi")
+```
+
+From the plot we can see that the data points are mainly concentrated on one set and towards the end of the diagonal they start thinning out and that point is considered as an outlier and this value at which they are thinning out is considered as the threshold for both the graphs. That is 0.6 for bmi and 0.95 for average glucose level.
+
+```{r}
+outliers <- numeric(0)
+
+# Outlier identification for the columns avg_glucose_level and bmi
+
+avg_glucose_z <- normalization(df_c$avg_glucose_level)
+avg_glucose_outliers <- which(abs(avg_glucose_z) > 0.95)
+
+outliers <- c(outliers,avg_glucose_outliers)
+
+# Outlier identification of bmi
+
+bmi_zscores <- normalization(df_c$bmi)
+bmi_ots <- which(abs(bmi_zscores)>0.6)
+
+outliers <- c(outliers,bmi_ots)
+
+# Combined list of unique outliers 
+outliers <- unique(outliers)
+outliers
+
+no_outliers <- length(outliers)
+
+```
+
+We can see from above that there are a total of `r no_outliers` outliers in the continuous features. We can try different transforms or remove them from the dataset if the transformations do not work. Let us try three transformations, the log transformations, square root and inverse transformations.
+
+
+```{r}
+
+# Log transform
+
+df_c$logtransform_bmi <- log(df_c$bmi)
+df_c$logtransform_glucose <- log(df_c$avg_glucose_level)
+
+# Square-root transform
+
+df_c$sq_bmi <- sqrt(df_c$bmi)
+df_c$sq_glu <- sqrt(df_c$avg_glucose_level)
+
+# Inverse Transform
+
+df_c$inv_bmi <- 1/(df_c$bmi)
+df_c$inv_glu <- 1/(df_c$avg_glucose_level)
+
+```
+
+Now we can check if the samples follow a normal distribution or not using the shapiro-wilk test.
+
+```{r}
+norm_test <- df_c[,c("logtransform_bmi","logtransform_glucose","sq_bmi","sq_glu","inv_bmi","inv_glu")]
+cols <- colnames(norm_test)
+
+for (col in cols) {
+  x <- shapiro.test(norm_test[1:5000,col])
+  print(paste0("P-value for the column, ", col, " : ",x$p.value))
+}
+```
+
+We can see that none of the normalization techniques have worked and hence we will continue with the analysis from the original encoded features. The outliers present in the dataset will be removed.
+
+```{r}
+# Combine the dataset of categorical and continuous variables
+
+df <- merge(df_cat,df_c, by = "id")
+rownames(df) <- df$id
+
+```
+
+After seeing the dataframe we notice that we have some columns that are repeated and there are some columns that are not required because they dont follow the normal distribution even after transforming the data. Hence, we proceed with the original data after normalization, using the z-score standardization.
+
+```{r}
+# The column stroke has come in twice and hence replacing it with one column
+
+df$stroke.y <- NULL
+
+# We dont need the transformed values since they were of no good to us
+df[,13:18] <- NULL
+
+# Renaming the target variable column
+colnames(df)[colnames(df) == "stroke.x"] <- "stroke"
+
+df$stroke <- as.factor(df$stroke)
+
+# Replace the columns of normalized values
+df$bmi <- bmi_zscores
+df$avg_glucose_level <- avg_glucose_z
+```
+
+Let us perform PCA to know what percentage of variance each variable contributes. In this case no matter how much each column contributes we cannot leave out the two continuous columns.
+
+```{r}
+pca_result <- prcomp(df_c[,1:2],scale. = TRUE)
+summary(pca_result)
+
+fviz_eig(pca_result, 
+         addlabels = TRUE,
+         ylim = c(0, 70))
+
+```
+
+
+From the plot we can understand that both the columns contribute equally and hence both the columns will be taken for further analysis.
+
+We now, remove the outliers and then divide the dataset into a training dataset and a validation dataset.
+
+```{r}
+
+# Remove the outliers
+df <- df[-outliers,]
+
+# Create the training and testing dataset
+
+set.seed(14231)
+indices <- sample(1:nrow(df), 0.7 * nrow(df),replace = FALSE)
+df_train <- df[indices, ]
+df_test <- df[-indices, ]
+
+
+# Extract the labels of the testing and training dataset for the algorithm
+
+actual_train_labels <- df_train$stroke
+actual_test_labels <- df_test$stroke
+
+```
+
+
+### Logistic Regression
+
+Logistic regression is a very popular algorithm which works very well for classification problems. In this algorithm, the probability of the outcome is given out in the range of values between 0 and 1. This is basically compressing the values in between 0 and 1, where the closer it is to 1 means positive and the closer it is to 0 means negative. In our case, 1 means the person had a stroke and 0 means the person did not have a stroke.
+
+```{r}
+logistic_model <- glm(stroke ~ ., data = df_train, family = binomial)
+predictions_prob <- predict(logistic_model, newdata = df_test[,-10], type = "response")
+binary_predictions <- ifelse(predictions_prob > 0.5, 1, 0)
+
+# Now create the confusion matrix
+con_mat_log <- table(Predicted = binary_predictions, Actual = df_test$stroke)
+
+d2 <- CrossTable(con_mat_log,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+```
+We can see that the model has predicted the true negatives correctly but when it comes to true positives, the model is making mistakes when in comes to the positive predictions. Let us evaluate this model by calculating the precision, recall and F1 score.
+
+```{r}
+true_negative_log <- con_mat_log[1, 1]  
+true_positive_log <- 0  
+false_positive_log <- 0
+false_negative_log <- con_mat_log[1, 2] 
+
+
+accuracy_log <- (true_positive_log + true_negative_log) / (true_negative_log+true_positive_log+false_positive_log+false_negative_log)
+
+precision_log<-true_positive_log/(true_positive_log+false_positive_log)
+recall_log <- true_negative_log / (true_negative_log+true_positive_log+false_positive_log+false_negative_log)
+f1_score_log <- 2 * (precision_log * recall_log) / (precision_log + recall_log)
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_log`\
+- Precision: `r precision_log`\
+- Recall: `r recall_log`\
+- f1: `r f1_score_log`
+
+### Decision tree model
+
+Decision tree is a model where the algorithm arrives at an answer after asking a series of yes or no questions and thus determines the target variable. This constructs a tree and the decision traverses along a particular branch and finally arrives at the answer and gives that as the target variable.
+
+```{r}
+decision_tree_model1 <- bagging(stroke~., data = df_train,nbagg = 100)
+dt_model <- predict(decision_tree_model1, newdata = df_test[,-10], type = "class")
+
+# Create a confusion matrix to evaluate the model
+con_mat_dt1 <- table(Predicted = dt_model, Actual = actual_test_labels)
+
+d3 <- CrossTable(con_mat_dt1,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+```
+
+Let us now evaluate the metrics of the decision tree and calculate the precision, recall, accuracy and the F1-score for this model.
+```{r}
+
+true_negative_dt1 <- con_mat_dt1[1, 1]  
+true_positive_dt1 <- con_mat_dt1[2, 2]  
+false_positive_dt1 <- con_mat_dt1[2, 1] 
+false_negative_dt1 <- con_mat_dt1[1, 2] 
+
+accuracy_dt <- (true_positive_dt1 + true_negative_dt1) / (true_negative_dt1+true_positive_dt1+false_positive_dt1+false_negative_dt1)
+
+precision_dt<-round(d3$t[1]/ sum(d3$t[3],d3$t[1]),3)
+
+recall_dt <- true_negative_dt1 / (true_negative_dt1+true_positive_dt1+false_positive_dt1+false_negative_dt1)
+f1_dt <- 2 * (precision_dt * recall_dt) / (precision_dt + recall_dt)
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_dt`\
+- Precision: `r precision_dt`\
+- Recall: `r recall_dt`\
+- f1: `r f1_dt`
+
+#### Hypertuning the parameters
+
+The parameter is setting the maximum depth of how much the tree can go. Thus trying to capture more complex parameters.
+```{r}
+# Converting the stroke data to X0 and X1 of type chr for the model to run smoothly
+df_train$stroke <- make.names(df_train$stroke)
+
+# Using k-fold cross validation to make another tuned model
+dt_model_cv <- train(
+  stroke ~ .,
+  data = df_train,
+  method = "rpart",
+  trControl = trainControl(method = "cv", number = 5, classProbs = TRUE),
+  tuneLength = 5,
+  control = rpart.control(maxdepth = 10)
+)
+
+predictions_dt2 <- predict(dt_model_cv,df_test)
+con_mat_dt2 <- table(Predicted = predictions_dt2,actual_test_labels)
+d9 <- CrossTable(con_mat_dt2,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+```
+Evaluation of the metrics for the model.
+```{r}
+true_negative_dt2 <- con_mat_dt2[1, 1]  
+true_positive_dt2 <- con_mat_dt2[2, 2]  
+false_positive_dt2 <- con_mat_dt2[2, 1] 
+false_negative_dt2 <- con_mat_dt2[1, 2] 
+
+accuracy_dt2 <- (true_positive_dt2 + true_negative_dt2) / (true_negative_dt2+true_positive_dt2+false_positive_dt2+false_negative_dt2)
+
+precision_dt2<-round(d9$t[1]/ sum(d9$t[3],d9$t[1]),3)
+
+recall_dt2 <- true_negative_dt2 / (true_negative_dt2+true_positive_dt2+false_positive_dt2+false_negative_dt2)
+f1_dt2 <- 2 * (precision_dt2 * recall_dt2) / (precision_dt2 + recall_dt2)
+
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_dt2`\
+- Precision: `r precision_dt2`\
+- Recall: `r recall_dt2`\
+- f1: `r f1_dt2`
+
+We can see that there is no difference between the two models of decision trees even after hyper parameter tuning.
+
+```{r,echo=FALSE}
+# Changing the column stroke to as it is
+df_train$stroke <- ifelse(df_train$stroke=="X0",0,1)
+df_train$stroke <- as.factor(df_train$stroke)
+
+```
+### Random Forest Model
+
+Random forest can be thought of as multiple decision trees giving outputs and the final output will be averaging the decisions arrived at by multiple decision trees.
+
+```{r}
+
+rf_model <- randomForest(stroke~., data = df_train)
+rf_preds <- predict(rf_model,newdata = df_test)
+con_mat_rf <- table(Predicted = rf_preds, Actual = actual_test_labels)
+
+
+d4 <- CrossTable(con_mat_rf,prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+```
+Let us now evaluate the metrics of the decision tree and calculate the precision, recall, accuracy and the F1-score for this model.
+
+```{r}
+
+true_negative_rf <- con_mat_rf[1, 1]  
+true_positive_rf <- con_mat_rf[2, 2]  
+false_positive_rf <- con_mat_rf[2, 1] 
+false_negative_rf <- con_mat_rf[1, 2] 
+
+accuracy_rf <- (true_positive_rf + true_negative_rf) / (true_negative_rf+true_positive_rf+false_positive_rf+false_negative_rf)
+
+precision_rf<-round(d4$t[1]/ sum(d4$t[3],d4$t[1]),3)
+
+recall_rf <- true_negative_rf / (true_negative_rf+true_positive_rf+false_positive_rf+false_negative_rf)
+f1_rf <- 2 * (precision_rf * recall_rf) / (precision_rf + recall_rf)
+
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_rf`\
+- Precision: `r precision_rf`\
+- Recall: `r recall_rf`\
+- f1: `r f1_rf`
+
+#### Hyper Parameter Tuning
+
+Increasing the depth in the trees so that each tree captures more complex models and thus makes the predictions better
+
+```{r}
+# Converting the stroke data to X0 and X1 of type chr for the model to run smoothly
+df_train$stroke <- make.names(df_train$stroke)
+
+ctrl <- trainControl(method = "cv", number = 5, classProbs = TRUE)
+
+rf_model_cv <- train(
+  stroke ~ .,
+  data = df_train,
+  method = "rf",
+  trControl = ctrl,
+  nodesize = 5,
+  importance = TRUE
+)
+
+rf_preds2 <- predict(rf_model_cv,df_test)
+con_mat_rf2 <- table(Predicted = rf_preds2, Actual = actual_test_labels)
+
+d10 <- CrossTable(con_mat_rf,prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+```
+```{r}
+true_negative_rf2 <- con_mat_rf[1, 1]  
+true_positive_rf2 <- con_mat_rf[2, 2]  
+false_positive_rf2 <- con_mat_rf[2, 1] 
+false_negative_rf2 <- con_mat_rf[1, 2] 
+
+accuracy_rf2 <- (true_positive_rf2 + true_negative_rf2) / (true_negative_rf2+true_positive_rf2+false_positive_rf2+false_negative_rf2)
+
+precision_rf2<-round(d10$t[1]/ sum(d10$t[3],d10$t[1]),3)
+
+recall_rf2 <- true_negative_rf2 / (true_negative_rf2+true_positive_rf2+false_positive_rf2+false_negative_rf2)
+f1_rf2 <- 2 * (precision_rf2 * recall_rf2) / (precision_rf2 + recall_rf2)
+
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_rf2`\
+- Precision: `r precision_rf2`\
+- Recall: `r recall_rf2`\
+- f1: `r f1_rf2`
+
+We see that there is no difference when it comes to the the hyperparameter tuning between the two models.
+
+```{r,echo=FALSE}
+# Changing the column stroke to as it is
+df_train$stroke <- ifelse(df_train$stroke=="X0",0,1)
+df_train$stroke <- as.factor(df_train$stroke)
+
+```
+
+### Naive-Bayes model
+
+The algorithm calculates the prior probabilities for each class, which represent the likelihood of each class occurring in the training data. It also calculates the conditional probabilities for each feature in the dataset given each class.
+
+```{r,warning=FALSE}
+nb_model <- NaiveBayes(stroke~.,data = df_train)
+nb_preds <- predict(nb_model,df_test)
+
+con_mat_nb<-table(nb_preds$class, actual_test_labels)
+
+d5 <- CrossTable(con_mat_nb,prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+
+```
+
+Let us now evaluate the metrics of the decision tree and calculate the precision, recall, accuracy and the F1-score for this model.
+
+```{r}
+
+true_negative_nb <- con_mat_nb[1, 1]  
+true_positive_nb <- con_mat_nb[2, 2]  
+false_positive_nb <- con_mat_nb[2, 1] 
+false_negative_nb <- con_mat_nb[1, 2] 
+
+accuracy_nb <- (true_positive_nb + true_negative_nb) / (true_negative_nb+true_positive_nb+false_positive_nb+false_negative_nb)
+
+precision_nb<-round(d5$t[1]/ sum(d5$t[3],d5$t[1]),3)
+
+recall_nb <- true_negative_nb / (true_negative_nb+true_positive_nb+false_positive_nb+false_negative_nb)
+f1_nb <- 2 * (precision_nb * recall_nb) / (precision_nb + recall_nb)
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_nb`\
+- Precision: `r precision_nb`\
+- Recall: `r recall_nb`\
+- f1: `r f1_nb`
+
+### Support Vector Machine
+
+Support vector machine works by creating a hyperplane between the dimenstions and this hyperplane is moved in such a way that it clearly separates the points based on the points that has been given in the training dataset and predicts the given points.
+
+```{r}
+
+svm_model <- bagging(stroke~., data = df_train,nbagg = 100,BOOTr = "svm")
+svm_preds <- predict(svm_model,newdata = df_test[,-10])
+
+con_mat_svm <- table(svm_preds,actual_test_labels)
+d6 <- CrossTable(con_mat_svm,prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+```
+
+Let us now evaluate the metrics of the decision tree and calculate the precision, recall, accuracy and the F1-score for this model.
+
+
+```{r}
+true_negative_sv <- con_mat_svm[1, 1]  
+true_positive_sv <- con_mat_svm[2, 2]  
+false_positive_sv <- con_mat_svm[2, 1] 
+false_negative_sv <- con_mat_svm[1, 2] 
+
+accuracy_sv <- (true_positive_sv + true_negative_sv) / (true_negative_sv+true_positive_sv+false_positive_sv+false_negative_sv)
+
+precision_sv<-round(d6$t[1]/ sum(d6$t[3],d6$t[1]),3)
+
+recall_sv <- true_negative_sv / (true_negative_sv+true_positive_sv+false_positive_sv+false_negative_sv)
+f1_sv <- 2 * (precision_sv * recall_sv) / (precision_sv + recall_sv)
+
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_sv`\
+- Precision: `r precision_sv`\
+- Recall: `r recall_sv`\
+- f1: `r f1_sv`
+
+
+#### HyperParameter Tuning
+
+Trying a different kernel to see if the results are better for the SVM model. Kernels are those functions that computes the simlarity between the data points and projects that into a higher dimension so that a hyperplane can separate the two functions. This function is changed by specifying linear and radial.
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Train the SVM model with radial kernel and cross-validation
+svm_model2 <- train(
+  stroke ~ .,
+  data = df_train,
+  method = "svmRadial",
+  trControl = ctrl
+)
+
+svm_predictions <- predict(svm_model2, newdata = df_test[,-10])
+
+con_mat_svm2 <- table(svm_predictions,actual_test_labels)
+d7 <- CrossTable(con_mat_svm,prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+```
+
+From this, we can see that there is not much difference in the predictions with the linear kernel and the radial kernel.
+However, by evaluating the metrics we can be sure of the whether there is a difference between the models or not in our dataset.
+
+
+```{r}
+true_negative_sv2 <- con_mat_svm2[1, 1]  
+true_positive_sv2 <- con_mat_svm2[2, 2]  
+false_positive_sv2 <- con_mat_svm2[2, 1] 
+false_negative_sv2 <- con_mat_svm2[1, 2] 
+
+accuracy_sv2 <- (true_positive_sv2 + true_negative_sv2) / (true_negative_sv2+true_positive_sv2+false_positive_sv2+false_negative_sv2)
+
+precision_sv2<-round(d7$t[1]/ sum(d7$t[3],d7$t[1]),3)
+
+recall_sv2 <- true_negative_sv2 / (true_negative_sv2+true_positive_sv2+false_positive_sv2+false_negative_sv2)
+f1_sv2 <- 2 * (precision_sv2 * recall_sv2) / (precision_sv2 + recall_sv2)
+```
+
+We can see that all the scores are as follows for this model:\
+- Accuracy: `r accuracy_sv2`\
+- Precision: `r precision_sv2`\
+- Recall: `r recall_sv2`\
+- f1: `r f1_sv2`\
+
+
+We can see that there is no difference when we change the kernels for the SVM.
+
+### Analysis
+
+We can see that even after using the hyper parameter tuning in order to increase the models accuracy there was no improvement in case of any of the models. We decide which is the best model seeing the F1 scores. We can see that SVM algorithm shows the highest F1 score which is `r round((f1_sv2 *100),3)`. It can be concluded that this was rgw best model. 
+
+But, all the models performed almost equally in terms of the scores because almost all of them had an accuracy of around 94% most of the time except for naive Bayes which 88% accuracy. However, despite having a very high accuracy score all the models failed to predict the true positives in the dataset. Since the dataset itself had a high number of patients who had not had a stroke that is reflected in the results. However, it would be better if there is more data on the true positives as well.
+
+### Ensemble Model
+
+An ensemble model is a hetergenous learner which comprises of a function which predicts the values using many models and this simply takes a majority vote and gives the output as whatever most of the models call the label. Ensemble models can be more confident because they combine the predictions of various machine learning models and this gives us a confidence when predicting the label of a problem. The model is less likely to be wrong because there is a chance that the wrong predictions of one model may be overshadowed by the right predictions of the other (The other way is also a possibility, though highly unlikely if the accuracy of the model is good.)
+
+```{r, warning=FALSE}
+# Creating the ensembl function
+ensemble <- function(data){
+  
+  
+  log_reg <- predict(logistic_model,data)
+  log_reg <- ifelse(log_reg>0.5,1,0)
+  
+  rf <- predict(rf_model,data)
+  
+  dt <- predict(dt_model_cv,data)
+  
+  sv <- predict(svm_model,data)
+  
+  nb <- predict(nb_model,data)$class
+  
+  preds <- rbind(log_reg,rf,dt,sv,nb)
+  
+  ux <- unique(preds)
+  f <- ux[which.max(tabulate(match(ux,x)))]
+  
+  return(f)
+}
+
+# Applying the ensemble prediction to a random data point
+data <- df_test[756,-10]
+
+en <- ensemble(data)
+en
+
+```
