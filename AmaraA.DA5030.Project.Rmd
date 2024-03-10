@@ -15,7 +15,7 @@ https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset/data
 
 # Classification of Patients with stroke
 
-For the project, the dataset consists of 11 features which consist of the below features:
+For the project, the dataset consists of 11 features which consist of the features:
 
 1) id: unique identifier
 2) gender: "Male", "Female" or "Other"
@@ -30,7 +30,7 @@ For the project, the dataset consists of 11 features which consist of the below 
 11) smoking_status: "formerly smoked", "never smoked", "smokes" or "Unknown"*
 12) stroke: 1 if the patient had a stroke or 0 if not
 
-The dataset has 5110 observations. The target label will be to predict whether the patient will had a stroke or not given the above features.
+The dataset has 5110 observations. The target label will be to predict whether the patient will have a stroke or not given the above features.
 
 
 ### Loading the dataset and inspecting the dataset
